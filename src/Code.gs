@@ -17,7 +17,7 @@
  * Optionally accepts ?page= param for deep-linking (future use).
  */
 function doGet(e) {
-  const tpl = HtmlService.createTemplateFromFile('Index');
+  const tpl = HtmlService.createTemplateFromFile('ui/index');
   tpl.page = (e && e.parameter && e.parameter.page) || '';
   return tpl
     .evaluate()

@@ -1,6 +1,6 @@
 <script>
 function renderScheduleFlow(container) {
-  const { getClientCache, setClientCache, clearClientCache, backBtn } = window.SPCA;
+  const { getClientCache, setClientCache, clearClientCache, backBtn, sectionTitle } = window.SPCA;
   sectionTitle.textContent = 'Schedule New Appointment';
 
   // Build simplified flow skeleton
@@ -53,6 +53,12 @@ function renderScheduleFlow(container) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  function prettyDate(yyyy_mm_dd) {
+    const d = new Date(yyyy_mm_dd);
+    if (isNaN(d)) return yyyy_mm_dd || 'TBD';
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
   // ──────────────────────────────
   // Step 2: Client & Pet Form
   // ──────────────────────────────
@@ -60,11 +66,97 @@ function renderScheduleFlow(container) {
     const f = container.querySelector('#formFields');
     const cached = getClientCache();
 
-    // Keep the full original form from Grant version
-    f.innerHTML = `<?!= include('ui/partials/form.client-pet.html'); ?>`;
-    // ^ optional include if you have the form split — if not, paste your full field HTML here
+    const stateOptions = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
 
-    // phone formatting, vaccine list, and additional services (same as before)
+    f.innerHTML = `
+      <div class="field"><label>First Name</label><input type="text" id="firstName" required value="${cached['First Name']||''}"></div>
+      <div class="field"><label>Last Name</label><input type="text" id="lastName" required value="${cached['Last Name']||''}"></div>
+      <div class="field"><label>Email</label><input type="email" id="email" value="${cached['Email']||''}"></div>
+      <div class="field"><label>Phone</label><input type="tel" id="phone" placeholder="(###) ###-####" required value="${cached['Phone Number']||''}"></div>
+
+      <hr class="divider">
+      <h3>Address</h3>
+      <div class="field"><label>Address</label><input type="text" id="address" value="${cached['Address']||''}"></div>
+      <div class="field"><label>City</label><input type="text" id="city" value="${cached['City']||''}"></div>
+      <div class="field">
+        <label>State</label>
+        <select id="state">
+          ${stateOptions.map(st => `<option ${ (cached['State'] ? cached['State']===st : st==='NY') ? 'selected':''}>${st}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Zip Code</label><input type="text" id="zip" maxlength="10" pattern="\\d{5}(-\\d{4})?" value="${cached['Zip Code']||''}"></div>
+
+      <hr class="divider">
+      <h3>Pet Information</h3>
+      <div class="field"><label>Pet Name</label><input type="text" id="petName" required></div>
+      <div class="field">
+        <label>Species</label>
+        <select id="species" required>
+          <option value="">— Select —</option>
+          <option value="Canine">Canine</option>
+          <option value="Feline">Feline</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="field"><label>Primary Breed</label><input type="text" id="breedOne"></div>
+      <div class="field"><label>Secondary Breed</label><input type="text" id="breedTwo"></div>
+      <div class="field"><label>Color</label><input type="text" id="color"></div>
+      <div class="field"><label>Color Pattern</label><input type="text" id="colorPattern"></div>
+
+      <div class="field">
+        <label>Sex</label>
+        <select id="sex" required>
+          <option value="">— Select —</option>
+          <option>Male</option>
+          <option>Female</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Spayed or Neutered</label>
+        <select id="altered">
+          <option value="">— Select —</option>
+          <option>Spayed</option>
+          <option>Neutered</option>
+          <option>No</option>
+          <option>Unknown</option>
+        </select>
+      </div>
+
+      <div class="field"><label>Age</label><input type="text" id="age" placeholder="e.g., 2 years or 8 months"></div>
+
+      <div class="field">
+        <label>Vaccines Needed</label>
+        <div id="vaccines" class="option-list"></div>
+      </div>
+
+      <div class="field">
+        <label>Additional Services Needed</label>
+        <div id="additionalServices" class="option-list"></div>
+      </div>
+
+      <div class="field">
+        <label>Previous Vet Records?</label>
+        <div class="option-buttons-left">
+          <label><input type="radio" name="hasVetRecords" value="Yes"> Yes</label>
+          <label><input type="radio" name="hasVetRecords" value="No" checked> No</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Vet Office Name</label>
+        <input type="text" id="vetOffice">
+      </div>
+
+      <div class="field"><label>Allergies or Sensitivities</label>
+        <input type="text" id="allergies" placeholder="None known">
+      </div>
+
+      <div class="field"><label>Approx. Weight (lbs)</label><input type="number" id="weight" min="0" step="0.1"></div>
+      <div class="field"><label>Additional Notes</label><textarea id="notes" rows="3" placeholder="Any special needs or concerns..."></textarea></div>
+    `;
+
+    // Phone formatting
     const phoneInput = f.querySelector('#phone');
     phoneInput.addEventListener('blur', () => {
       const digits = phoneInput.value.replace(/\D/g, '');
@@ -73,7 +165,7 @@ function renderScheduleFlow(container) {
       }
     });
 
-    // Populate vaccines dynamically
+    // Vaccines dynamic list
     const speciesSelect = f.querySelector('#species');
     const vaccineList = f.querySelector('#vaccines');
     google.script.run
@@ -81,7 +173,7 @@ function renderScheduleFlow(container) {
         if (!res || !res.ok) return;
         const lists = { canine: res.canine || [], feline: res.feline || [] };
 
-        const renderVaccines = val => {
+        const renderVaccines = (val) => {
           let options = [];
           if (val === 'Canine') options = lists.canine;
           else if (val === 'Feline') options = lists.feline;
@@ -89,7 +181,8 @@ function renderScheduleFlow(container) {
             ? options.map(v => `
                 <label class="radio-option">
                   <input type="checkbox" name="vaccine" value="${v}"> ${v}
-                </label>`).join('')
+                </label>
+              `).join('')
             : `<p style="opacity:.6; margin:0;">— No Vaccines Available —</p>`;
         };
 
@@ -109,7 +202,8 @@ function renderScheduleFlow(container) {
         containerEl.innerHTML = res.services.map(s => `
           <label class="radio-option">
             <input type="checkbox" name="service" value="${s}"> ${s}
-          </label>`).join('');
+          </label>
+        `).join('');
       })
       .apiGetAdditionalServices();
   }
@@ -138,7 +232,7 @@ function renderScheduleFlow(container) {
         </div>
         <hr class="divider">
         ${hasVetRecords ? `
-          <p>You indicated the client has previous veterinary records for this pet. 
+          <p>You indicated the client has previous veterinary records for this pet.
           You can upload them now, send the client an upload link, or remind yourself later.</p>
           <div class="actions">
             <input type="file" id="recordsUpload" multiple style="display:none;" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
@@ -152,9 +246,6 @@ function renderScheduleFlow(container) {
       </div>`;
 
     document.body.appendChild(modal);
-
-    // identical modal handling logic from Grant version (upload, send, remind)
-    // unchanged except that final call goes to apiSubmitShelterAppointment()
 
     const setToast = (msg, kind='') => {
       const toast = modal.querySelector('#modalToast');
@@ -182,9 +273,119 @@ function renderScheduleFlow(container) {
       });
     });
 
-    // Upload, send, and remind handlers (identical to original)...
-    // they each end by calling bookAppointment(modal.dataset.transport)
-    // after success or closing the modal
+    // Upload Records
+    const uploadBtn = modal.querySelector('#uploadBtn');
+    if (uploadBtn) {
+      uploadBtn.addEventListener('click', () => {
+        if (!modal.dataset.transport) { setToast('Please select Transportation (Yes or No) first.'); return; }
+
+        const input = modal.querySelector('#recordsUpload');
+        input.click();
+
+        input.onchange = () => {
+          const files = [...input.files];
+          if (!files.length) return;
+
+          const uploadList = modal.querySelector('#uploadList');
+          const prepRow = document.createElement('div');
+          prepRow.className = 'upload-item';
+          prepRow.innerHTML = `<span>Preparing upload…</span> <span class="spinner small"></span>`;
+          uploadList.appendChild(prepRow);
+
+          google.script.run
+            .withSuccessHandler(res => {
+              prepRow.remove();
+              if (!res.ok) { setToast('Error creating folder.', 'error'); return; }
+
+              let completed = 0;
+              files.forEach(file => {
+                const row = document.createElement('div');
+                row.className = 'upload-item';
+                row.innerHTML = `<span>${file.name}</span> <span class="spinner small"></span>`;
+                uploadList.appendChild(row);
+
+                const reader = new FileReader();
+                reader.onload = e => {
+                  const base64 = e.target.result.split(',')[1];
+                  google.script.run
+                    .withSuccessHandler(() => {
+                      completed++;
+                      row.innerHTML = `<span>${file.name}</span> <span class="status success">Uploaded</span>`;
+                      if (completed === files.length) {
+                        setToast('All files uploaded successfully!', 'success');
+                        setTimeout(() => {
+                          modal.remove();
+                          bookAppointment(modal.dataset.transport);
+                        }, 600);
+                      }
+                    })
+                    .withFailureHandler(err => {
+                      row.innerHTML = `<span>${file.name}</span> <span class="status error">Upload failed</span>`;
+                      console.error(err);
+                    })
+                    .apiUploadVetRecord(file.name, base64, res.folderId);
+                };
+                reader.readAsDataURL(file);
+              });
+            })
+            .withFailureHandler(err => {
+              prepRow.remove();
+              setToast('Error preparing upload.', 'error');
+              console.error(err);
+            })
+            .apiCreateVetRecordsFolder(firstName, lastName, petName, clientEmail);
+        };
+      });
+    }
+
+    // Send Records Request
+    const sendBtn = modal.querySelector('#sendRequestBtn');
+    if (sendBtn) {
+      sendBtn.addEventListener('click', () => {
+        if (!modal.dataset.transport) { setToast('Please select Transportation (Yes or No) first.'); return; }
+        sendBtn.classList.add('loading');
+
+        google.script.run
+          .withSuccessHandler(res => {
+            sendBtn.classList.remove('loading');
+            if (!res || !res.ok) { setToast(res?.error || 'Error sending email.', 'error'); return; }
+            setToast('Upload link sent to client!', 'success');
+            setTimeout(() => { modal.remove(); bookAppointment(modal.dataset.transport); }, 600);
+          })
+          .withFailureHandler(err => {
+            sendBtn.classList.remove('loading');
+            setToast('Failed to send email.', 'error');
+            console.error(err);
+          })
+          .apiSendVetRecordsRequest(clientEmail, '', firstName, petName);
+      });
+    }
+
+    // Remind Me Later
+    const remindBtn = modal.querySelector('#remindLaterBtn');
+    if (remindBtn) {
+      remindBtn.addEventListener('click', () => {
+        if (!modal.dataset.transport) { setToast('Please select Transportation (Yes or No) first.'); return; }
+        const scheduler = (typeof getSchedulerName === 'function') ? getSchedulerName() : '';
+        const apptCard = `${prettyDate(selectedDate)} (Surgery)`;
+
+        remindBtn.classList.add('loading');
+
+        google.script.run
+          .withSuccessHandler(res => {
+            remindBtn.classList.remove('loading');
+            if (!res || !res.ok) { setToast(res?.error || 'Reminder failed to send.', 'error'); return; }
+            setToast('Reminder sent to scheduler!', 'success');
+            setTimeout(() => { modal.remove(); bookAppointment(modal.dataset.transport); }, 600);
+          })
+          .withFailureHandler(err => {
+            remindBtn.classList.remove('loading');
+            setToast('Server error sending reminder.', 'error');
+            console.error(err);
+          })
+          .apiSendVetRecordReminder(scheduler, petName, apptCard);
+      });
+    }
   }
 
   // ──────────────────────────────
@@ -224,6 +425,7 @@ function renderScheduleFlow(container) {
       date: selectedDate
     };
 
+    // Save client portion to session cache for “Book another…”
     setClientCache({
       'First Name': payload.firstName,
       'Last Name': payload.lastName,
