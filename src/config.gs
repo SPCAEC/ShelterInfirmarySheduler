@@ -11,8 +11,8 @@
 
 const CFG = {
   // ─── Google Sheet Info ─────────────────────────────
-  SHEET_ID: '110OZsGAWmndDo07REdR92XDBLwKgMvtfZ1oboU', // replace if needed
-  SHEET_NAME: 'Appointments', // must match tab name exactly
+  SHEET_ID: '1PAjA1uGAyjCuaE5lv1P0erDtYKsX7wsbXOMHk4bhHg8',
+  SHEET_NAME: 'Sheet1', // must match tab name exactly
 
   // ─── Column Header Mappings ─────────────────────────
   COLS: {

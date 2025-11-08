@@ -42,37 +42,53 @@ function getHeaderMap_(sh) {
  * Append a new appointment row using the payload from the frontend.
  * Fills only known columns from CFG.COLS; others left blank.
  */
+/**
+ * Append a new appointment row using the payload from the frontend.
+ * Fills all known columns from CFG.COLS.
+ */
 function appendAppointmentRow_(payload) {
-  try {
-    const sh = getSheet_();
-    const { headers } = getHeaderMap_(sh);
+  const sh = getSheet_();
+  const { headers } = getHeaderMap_(sh);
 
-    const row = headers.map(h => {
-      const key = h.toLowerCase();
-      const col = Object.entries(CFG.COLS)
-        .find(([_, label]) => label.toLowerCase() === key);
-      const prop = col ? col[0] : null;
+  const row = headers.map(h => {
+    switch (h) {
+      case CFG.COLS.TYPE:              return 'Surgery';
+      case CFG.COLS.STATUS:            return 'Reserved';
+      case CFG.COLS.NEEDS_SCHED:       return 'Yes';
+      case CFG.COLS.DAY:               return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'EEEE');
+      case CFG.COLS.DATE:              return payload.date || '';
+      case CFG.COLS.TIME:              return payload.time || ''; // optional future use
+      case CFG.COLS.FIRST:             return payload.firstName || '';
+      case CFG.COLS.LAST:              return payload.lastName || '';
+      case CFG.COLS.ADDRESS:           return payload.address || '';
+      case CFG.COLS.CITY:              return payload.city || '';
+      case CFG.COLS.STATE:             return payload.state || '';
+      case CFG.COLS.ZIP:               return payload.zipCode || '';
+      case CFG.COLS.PHONE:             return payload.phoneNumber || '';
+      case CFG.COLS.EMAIL:             return payload.email || '';
+      case CFG.COLS.PET_NAME:          return payload.petName || '';
+      case CFG.COLS.SPECIES:           return payload.species || '';
+      case CFG.COLS.BREED_ONE:         return payload.breedOne || '';
+      case CFG.COLS.BREED_TWO:         return payload.breedTwo || '';
+      case CFG.COLS.COLOR:             return payload.color || '';
+      case CFG.COLS.COLOR_PATTERN:     return payload.colorPattern || '';
+      case CFG.COLS.SEX:               return payload.sex || '';
+      case CFG.COLS.AGE:               return payload.age || '';
+      case CFG.COLS.WEIGHT:            return payload.weight || '';
+      case CFG.COLS.ALTERED:           return payload.spayed || '';
+      case CFG.COLS.VET_OFFICE:        return payload.vetOffice || '';
+      case CFG.COLS.PREV_RECORDS:      return payload.previousVetRecords || 'No';
+      case CFG.COLS.ALLERGIES:         return payload.allergies || '';
+      case CFG.COLS.VACCINES:          return payload.vaccinesNeeded || '';
+      case CFG.COLS.ADDITIONAL_SERVICES:return payload.additionalServices || '';
+      case CFG.COLS.TRANSPORT:         return payload.transportationNeeded || 'No';
+      case CFG.COLS.NOTES:             return payload.notes || '';
+      case CFG.COLS.SCHEDULED_BY:      return Session.getActiveUser().getEmail() || '';
+      default:                         return '';
+    }
+  });
 
-      switch (prop) {
-        case 'TYPE':          return 'Surgery';
-        case 'STATUS':        return 'Reserved';          // <-- updated
-        case 'NEEDS_SCHED':   return 'Yes';               // <-- added
-        case 'DAY':           return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'EEEE');
-        case 'DATE':          return payload.date || '';
-        case 'SCHEDULED_BY':  return Session.getActiveUser().getEmail() || '';
-        default:              return payload[prop?.toLowerCase()] || payload[h] || '';
-      }
-    });
-
-    sh.appendRow(row);
-
-    Logger.log(
-      `✅ appendAppointmentRow_: Added "${payload.firstName || ''} ${payload.lastName || ''}" for ${payload.date || 'unknown date'}`
-    );
-    return true;
-
-  } catch (err) {
-    Logger.log(`❌ appendAppointmentRow_ failed: ${err.message || err}`);
-    throw err;
-  }
+  sh.appendRow(row);
+  Logger.log(`✅ appendAppointmentRow_: added "${payload.firstName} ${payload.lastName}"`);
+  return true;
 }
