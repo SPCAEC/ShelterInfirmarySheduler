@@ -1,43 +1,32 @@
 /**
- * Grant Appointment Scheduling — RPC Endpoints
- * Called from frontend via google.script.run
+ * SPCA Shelter-Side Clinic Scheduling — RPC Endpoints
+ * ---------------------------------------------------
+ * Public-facing backend functions called via google.script.run.
+ *
+ * Responsibilities:
+ *  • Receive structured payloads from the frontend
+ *  • Normalize and append appointment data
+ *  • Manage vet-record upload, reminder, and request emails
+ *  • Provide vaccine and service lists from Script Properties
+ *
+ * Differences from Grant Scheduler:
+ *  • No slot lookup or ID matching — append-only workflow
+ *  • Appointment Status → "Reserved"
+ *  • Needs Scheduling   → "Yes"
+ *  • Uses Workspace sender: nathanh@yourspcaoutreach.org
  */
 
-/**
- * Returns the next available slots for a given appointment type.
- */
-function apiGetAvailableSlots(type, limit) {
-  try {
-    Logger.log(`apiGetAvailableSlots() called | type=${type} | limit=${limit}`);
-    limit = limit || 6;
-    if (!CFG || !CFG.SHEET_ID) throw new Error('Configuration (CFG) not found.');
-
-    const slotsRaw = getAvailableSlots_(type, limit);
-    if (!Array.isArray(slotsRaw)) throw new Error('No slot data returned from getAvailableSlots_()');
-
-    const slots = slotsRaw.map(r => ({
-      id:   String(r[CFG.COLS.ID] || ''),
-      day:  String(r[CFG.COLS.DAY] || ''),
-      date: String(r[CFG.COLS.DATE] || ''),
-      time: `${r[CFG.COLS.TIME] || ''} ${r[CFG.COLS.AMPM] || ''}`.trim(),
-      grant: String(r[CFG.COLS.GRANT] || '')
-    }));
-
-    Logger.log(`apiGetAvailableSlots() → returning ${slots.length} slots`);
-    return { ok: true, slots };
-  } catch (err) {
-    Logger.log('apiGetAvailableSlots() ERROR: ' + err + '\n' + err.stack);
-    return { ok: false, error: err.message || String(err) };
-  }
-}
+/* ========================================================================== */
+/* 1. Payload Normalization                                                   */
+/* ========================================================================== */
 
 /**
- * Normalize payload and ensure defaults before writing to sheet.
+ * Ensures required defaults for certain fields
+ * so the sheet never receives undefined or blank values.
  */
 function normalizePayload_(payload) {
   const out = Object.assign({}, payload);
 
-  // Default safe values
   const defaults = {
     'Allergies or Sensitivities': 'None known',
     'Previous Vet Records': 'No',
@@ -48,7 +37,6 @@ function normalizePayload_(payload) {
     if (!out[key] || String(out[key]).trim() === '') out[key] = val;
   });
 
-  // Ensure empty strings instead of undefined
   Object.keys(out).forEach(k => {
     if (out[k] == null) out[k] = '';
   });
@@ -56,65 +44,99 @@ function normalizePayload_(payload) {
   return out;
 }
 
+/* ========================================================================== */
+/* 2. Appointment Submission                                                  */
+/* ========================================================================== */
+
 /**
- * Books an appointment by unique Appointment ID.
- * Also writes "Scheduled By" to the sheet.
+ * Appends a new Shelter-Side appointment.
+ * Called by frontend via:
+ *   google.script.run.withSuccessHandler(...).apiSubmitShelterAppointment(payload)
  */
-function apiBookAppointment(payload, type, date, time, appointmentId, schedulerName) {
+function apiSubmitShelterAppointment(payload) {
   try {
-    Logger.log(`apiBookAppointment() | type=${type} | date=${date} | time=${time} | id=${appointmentId} | scheduler=${schedulerName}`);
-    if (!CFG || !CFG.SHEET_ID) throw new Error('Configuration (CFG) not found.');
-    if (!payload || typeof payload !== 'object') throw new Error('Invalid payload');
+    if (!payload) throw new Error('No payload received.');
+    if (!payload.firstName || !payload.lastName)
+      throw new Error('Missing client name.');
+    if (!payload.date)
+      throw new Error('Missing appointment date.');
 
-    payload = normalizePayload_(payload);
-    const data = readAllAppointments_();
-    if (!Array.isArray(data) || !data.length) throw new Error('No appointment data found.');
+    const clean = normalizePayload_(payload);
+    appendAppointmentRow_(clean);
 
-    let rowIndex = -1;
+    Logger.log(
+      `✅ apiSubmitShelterAppointment(): Added ${clean.firstName} ${clean.lastName} for ${clean.date}`
+    );
 
-    // Prefer Appointment ID
-    if (appointmentId) {
-      rowIndex = data.findIndex(r => String(r[CFG.COLS.ID]).trim() === String(appointmentId).trim()) + 2;
-      Logger.log(`Matched appointment by ID → rowIndex=${rowIndex}`);
-    }
-
-    // Fallback: type/date/time
-    if (rowIndex < 2) {
-      rowIndex = data.findIndex(r => {
-        const rowDate = r[CFG.COLS.DATE] instanceof Date
-          ? Utilities.formatDate(r[CFG.COLS.DATE], Session.getScriptTimeZone(), 'MM/dd/yyyy')
-          : String(r[CFG.COLS.DATE]).trim();
-
-        const rowTime = `${r[CFG.COLS.TIME]} ${r[CFG.COLS.AMPM]}`.trim();
-
-        return (
-          String(r[CFG.COLS.TYPE]).trim().toLowerCase() === String(type).trim().toLowerCase() &&
-          rowDate === String(date).trim() &&
-          rowTime === String(time).trim()
-        );
-      }) + 2;
-      Logger.log(`Legacy fallback match → rowIndex=${rowIndex}`);
-    }
-
-    if (rowIndex < 2) throw new Error(`Appointment slot not found (type=${type}, date=${date}, time=${time}, id=${appointmentId})`);
-
-    // Update row
-    payload[CFG.COLS.STATUS] = 'Reserved';
-    payload[CFG.COLS.NEEDS_SCHED] = 'Yes';
-    if (CFG.COLS.SCHEDULED_BY) payload[CFG.COLS.SCHEDULED_BY] = schedulerName || '';
-
-    updateAppointmentRow_(rowIndex, payload);
-
-    Logger.log(`apiBookAppointment() → Updated row ${rowIndex} successfully.`);
-    return { ok: true };
+    return { ok: true, message: 'Appointment added successfully.' };
   } catch (err) {
-    Logger.log('apiBookAppointment() ERROR: ' + err + '\n' + err.stack);
+    Logger.log(`❌ apiSubmitShelterAppointment() failed: ${err.message || err}`);
     return { ok: false, error: err.message || String(err) };
   }
 }
 
+/* ========================================================================== */
+/* 3. Vet-Record Folder & Upload Handling                                     */
+/* ========================================================================== */
+
 /**
- * Sends a reminder to scheduler to upload vet records.
+ * Creates or reuses a Drive folder for veterinary records.
+ * Gives Outreach Team + (optional) client edit access.
+ */
+function apiCreateVetRecordsFolder(firstName, lastName, petName, clientEmail) {
+  try {
+    const PARENT_ID = '1KMbIfS0Y5q1y7BDbLUj84U3snfXDNPUC'; // central Vet Records root
+    const parent = DriveApp.getFolderById(PARENT_ID);
+    const folderName = `${lastName}_${firstName}_${petName}`.replace(/[^\w\s-]/g, '_');
+
+    let folder;
+    const existing = parent.getFoldersByName(folderName);
+    folder = existing.hasNext() ? existing.next() : parent.createFolder(folderName);
+
+    try {
+      folder.addEditor('nathanh@yourspcaoutreach.org');
+      folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDITOR);
+      if (clientEmail) folder.addEditor(clientEmail);
+    } catch (permErr) {
+      Logger.log(`apiCreateVetRecordsFolder() permission warning: ${permErr.message}`);
+    }
+
+    Logger.log(`Vet folder ready: ${folderName}`);
+    return { ok: true, folderId: folder.getId(), url: folder.getUrl() };
+  } catch (err) {
+    Logger.log(`apiCreateVetRecordsFolder() ERROR: ${err.message || err}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Uploads a base64 file to a given Drive folder.
+ */
+function apiUploadVetRecord(filename, base64Data, folderId) {
+  try {
+    if (!folderId) throw new Error('Missing folderId');
+    if (!filename || !base64Data) throw new Error('Missing file data');
+
+    const folder = DriveApp.getFolderById(folderId);
+    const bytes = Utilities.base64Decode(base64Data);
+    const blob = Utilities.newBlob(bytes, undefined, filename);
+    blob.setContentTypeFromExtension();
+    folder.createFile(blob);
+
+    Logger.log(`apiUploadVetRecord(): ${filename} uploaded to folder ${folderId}`);
+    return { ok: true };
+  } catch (err) {
+    Logger.log(`apiUploadVetRecord() ERROR: ${err.message || err}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/* ========================================================================== */
+/* 4. Email Helpers                                                           */
+/* ========================================================================== */
+
+/**
+ * Sends a reminder to scheduler to upload vet records later.
  * Looks up recipient email by Script Property (EMAIL_NAME).
  */
 function apiSendVetRecordReminder(schedulerName, petName, appointmentCard) {
@@ -127,14 +149,16 @@ function apiSendVetRecordReminder(schedulerName, petName, appointmentCard) {
     const recipient = props.getProperty(propKey);
     if (!recipient) throw new Error(`Script property not found: ${propKey}`);
 
-    const uploadLink = 'https://script.google.com/macros/s/AKfycbxb1_Oha9qhWnaOMeUuFHSSEe5E7IoCPG2JPdkCn4Jmju-2VYiQzOobecO9DwKcC_pf/exec';
-    const subject = `REMINDER - Upload Records for ${petName}`;
+    const uploadLink =
+      'https://script.google.com/macros/s/AKfycbxb1_Oha9qhWnaOMeUuFHSSEe5E7IoCPG2JPdkCn4Jmju-2VYiQzOobecO9DwKcC_pf/exec';
+
+    const subject = `Reminder – Upload Records for ${petName}`;
     const body = `
 Hi ${schedulerName},
 
-Your friendly PHP System here reminding you to upload or provide records for ${petName} to the Lipsey Clinic before their upcoming appointment.
+Your friendly PHP System here reminding you to upload or provide records for ${petName} before their upcoming Shelter-Side appointment.
 
-The appointment is scheduled for:
+Appointment details:
 ${appointmentCard}
 
 You can upload records here:
@@ -145,19 +169,67 @@ ${uploadLink}
 
     MailApp.sendEmail({
       to: recipient,
-      from: 'yourspcaoutreachteam@gmail.com',
+      from: 'nathanh@yourspcaoutreach.org',
       name: 'SPCA Outreach Team',
       subject,
       body
     });
 
-    Logger.log(`apiSendVetRecordReminder() → sent to ${recipient}`);
+    Logger.log(`apiSendVetRecordReminder(): sent to ${recipient}`);
     return { ok: true };
   } catch (err) {
-    Logger.log('apiSendVetRecordReminder() ERROR: ' + err + '\n' + err.stack);
+    Logger.log(`apiSendVetRecordReminder() ERROR: ${err.message || err}`);
     return { ok: false, error: err.message };
   }
 }
+
+/**
+ * Sends vet-record upload email to the client using the
+ * central Vet Records Uploader app.
+ */
+function apiSendVetRecordsRequest(clientEmail, folderUrl, firstName, petName) {
+  try {
+    if (!clientEmail) throw new Error('Missing client email');
+
+    const props = PropertiesService.getScriptProperties();
+    const uploadLink = props.getProperty('RECORD_UPLOAD_LINK');
+    if (!uploadLink) throw new Error('Missing Script Property: RECORD_UPLOAD_LINK');
+
+    const subject = `Upload Veterinary Records for ${petName}`;
+    const body = `
+Hello ${firstName},
+
+You can securely upload your previous veterinary records for ${petName} using the link below:
+
+${uploadLink}
+
+Please ensure that you include all relevant pages or photos. 
+Your records will be kept secure and used only for your pet’s care.
+
+If you have any questions, please reply to this email or contact the SPCA Outreach Team.
+
+— SPCA Serving Erie County Outreach Team
+`;
+
+    MailApp.sendEmail({
+      to: clientEmail,
+      from: 'nathanh@yourspcaoutreach.org',
+      name: 'SPCA Outreach Team',
+      subject,
+      body
+    });
+
+    Logger.log(`apiSendVetRecordsRequest(): email sent to ${clientEmail} for ${petName}`);
+    return { ok: true };
+  } catch (err) {
+    Logger.log(`apiSendVetRecordsRequest() ERROR: ${err.message || err}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/* ========================================================================== */
+/* 5. Reference Lists                                                         */
+/* ========================================================================== */
 
 /**
  * Returns vaccine lists from Script Properties.
@@ -171,7 +243,7 @@ function apiGetVaccineLists() {
       .split(',').map(s => s.trim()).filter(Boolean);
     return { ok: true, canine, feline };
   } catch (err) {
-    Logger.log('apiGetVaccineLists() ERROR: ' + err);
+    Logger.log(`apiGetVaccineLists() ERROR: ${err.message || err}`);
     return { ok: false, error: err.message };
   }
 }
@@ -186,98 +258,7 @@ function apiGetAdditionalServices() {
       .split(',').map(s => s.trim()).filter(Boolean);
     return { ok: true, services: list };
   } catch (err) {
-    Logger.log('apiGetAdditionalServices() ERROR: ' + err);
-    return { ok: false, error: err.message };
-  }
-}
-
-/**
- * Handles vet record folder creation and permission setup.
- */
-function apiCreateVetRecordsFolder(firstName, lastName, petName, clientEmail) {
-  try {
-    const PARENT_ID = '1KMbIfS0Y5q1y7BDbLUj84U3snfXDNPUC';
-    const parent = DriveApp.getFolderById(PARENT_ID);
-    const folderName = `${lastName}_${firstName}_${petName}`.replace(/[^\w\s-]/g, '_');
-
-    let folder;
-    const existing = parent.getFoldersByName(folderName);
-    folder = existing.hasNext() ? existing.next() : parent.createFolder(folderName);
-
-    try {
-      folder.addEditor('yourspcaoutreachteam@gmail.com');
-      folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDITOR);
-      if (clientEmail) folder.addEditor(clientEmail);
-    } catch (permErr) {
-      Logger.log('apiCreateVetRecordsFolder() permission warning: ' + permErr.message);
-    }
-
-    Logger.log(`Vet folder ready: ${folderName}`);
-    return { ok: true, folderId: folder.getId(), url: folder.getUrl() };
-  } catch (err) {
-    Logger.log('apiCreateVetRecordsFolder() ERROR: ' + err + '\n' + err.stack);
-    return { ok: false, error: err.message };
-  }
-}
-
-/**
- * Sends vet records upload email using the central upload web app link.
- */
-function apiSendVetRecordsRequest(clientEmail, folderUrl, firstName, petName) {
-  try {
-    if (!clientEmail) return { ok: false, error: 'Missing client email' };
-
-    const props = PropertiesService.getScriptProperties();
-    const uploadLink = props.getProperty('RECORD_UPLOAD_LINK');
-    if (!uploadLink) throw new Error('Missing Script Property: RECORD_UPLOAD_LINK');
-
-    const subject = `Upload Veterinary Records for ${petName}`;
-    const body = `
-Hello ${firstName},
-
-You can securely upload your previous veterinary records for ${petName} using the link below:
-
-${uploadLink}
-
-Please ensure that you include all relevant pages or photos. Your records will be kept secure and used only for your pet’s care.
-
-If you have any questions, please reply to this email or contact the SPCA Outreach Team.
-
-— SPCA Serving Erie County Outreach Team
-`;
-
-    MailApp.sendEmail({
-      to: clientEmail,
-      name: 'SPCA Outreach Team',
-      from: 'yourspcaoutreachteam@gmail.com',
-      subject,
-      body
-    });
-
-    Logger.log(`Vet record upload email sent to ${clientEmail} for ${petName}.`);
-    return { ok: true };
-  } catch (err) {
-    Logger.log('apiSendVetRecordsRequest() ERROR: ' + err);
-    return { ok: false, error: err.message };
-  }
-}
-
-/**
- * Uploads a base64 file to a given Drive folder.
- */
-function apiUploadVetRecord(filename, base64Data, folderId) {
-  try {
-    if (!folderId) throw new Error('Missing folderId');
-    if (!filename || !base64Data) throw new Error('Missing file data');
-    const folder = DriveApp.getFolderById(folderId);
-    const bytes = Utilities.base64Decode(base64Data);
-    const blob = Utilities.newBlob(bytes, undefined, filename);
-    blob.setContentTypeFromExtension();
-    folder.createFile(blob);
-    Logger.log(`apiUploadVetRecord() → ${filename} uploaded to folder ${folderId}`);
-    return { ok: true };
-  } catch (err) {
-    Logger.log('apiUploadVetRecord() ERROR: ' + err + '\n' + err.stack);
+    Logger.log(`apiGetAdditionalServices() ERROR: ${err.message || err}`);
     return { ok: false, error: err.message };
   }
 }

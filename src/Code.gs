@@ -1,53 +1,51 @@
 /**
- * Grant Appointment Scheduling — Main Entry Point
- * Serves the standalone web app and includes UI partials.
- *
- * Structure:
- *  - doGet(): main entry, serves ui/index.html
- *  - include(): safely inlines CSS/JS partials using <?!= include('path/file'); ?>
+ * SPCA Shelter-Side Clinic Scheduling
+ * -----------------------------------
+ * Main entry point for the Shelter-Side appointment web app.
+ * 
+ * Responsibilities:
+ *  • Serve the main HTML UI via doGet()
+ *  • Provide the include() helper for partial HTML injection
+ * 
+ * Notes:
+ *  • Unlike the Grant Scheduler, this app does not use pre-set appointment slots.
+ *  • Appointments are surgery-only and appended directly to the sheet.
  */
 
 /**
- * Serves the main HTML interface.
+ * Serve the main HTML interface.
+ * Optionally accepts ?page= param for deep-linking (future use).
  */
-function doGet() {
-  try {
-    Logger.log('🚀 Serving Grant Appointment Scheduling web app...');
-    return HtmlService.createTemplateFromFile('ui/index')
-      .evaluate()
-      .setTitle('Grant Appointment Scheduling')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-      .setSandboxMode(HtmlService.SandboxMode.IFRAME);
-  } catch (err) {
-    Logger.log(`❌ doGet() ERROR: ${err.message || err}`);
-    return HtmlService.createHtmlOutput('<p>Error loading web app.</p>');
-  }
+function doGet(e) {
+  const tpl = HtmlService.createTemplateFromFile('Index');
+  tpl.page = (e && e.parameter && e.parameter.page) || '';
+  return tpl
+    .evaluate()
+    .setTitle('Shelter-Side Clinic Scheduling');
 }
 
 /**
  * include(filename)
+ * -----------------
  * Safely inlines UI partials into HtmlService templates.
- * Accepts paths like "ui/js.utils" or "ui/js.utils.html".
+ * Usage: <?!= include('ui/js.utils'); ?>
  *
- * Example:
- *   <?!= include('ui/js.utils'); ?>
+ * Accepts paths with or without ".html" extension.
  */
 function include(filename) {
   try {
-    // Normalize path and ensure extension
-    let path = filename.trim().replace(/^\/*/, ''); // remove leading slashes
+    let path = filename.trim().replace(/^\/*/, ''); // strip leading slashes
     if (!path.endsWith('.html')) path += '.html';
 
-    // Try to load file content from project
     const file = HtmlService.createHtmlOutputFromFile(path);
     const content = file.getContent();
+    if (!content) throw new Error('File found but empty.');
 
-    if (!content) throw new Error('File found but empty');
     return content;
 
   } catch (err) {
-    Logger.log(`❌ include() failed for "${filename}": ${err.message || err}`);
-    // Return harmless comment instead of raw include tag
+    Logger.log(`❌ include("${filename}") failed: ${err.message || err}`);
+    // Return harmless HTML comment so the UI still renders
     return `<!-- include error: ${filename} (${err.message || err}) -->`;
   }
 }

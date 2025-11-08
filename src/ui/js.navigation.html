@@ -2,12 +2,21 @@
 document.addEventListener('DOMContentLoaded', () => {
   const { $$, backBtn, header, sectionTitle, mainMenu, views, clearClientCache } = window.SPCA;
 
-  // ─── Tile navigation ───────────────────────────
+  /* ==========================================================
+   *  Navigation Logic — Shelter-Side Clinic Scheduling
+   * ==========================================================
+   *  • Handles tile clicks from main menu
+   *  • Switches between main menu and the active scheduling view
+   *  • Integrates the "Who Are You?" step before scheduling
+   *  • Hides inactive sections and resets header on back
+   * ========================================================== */
+
+  // ─── Tile Navigation ───────────────────────────
   $$('.tile').forEach(btn => {
     btn.addEventListener('click', () => openView(btn.dataset.view));
   });
 
-  // ─── Back button: return to main menu ──────────
+  // ─── Back Button → Return to Main Menu ─────────
   backBtn.addEventListener('click', () => {
     clearClientCache();
     header.classList.add('hidden');
@@ -17,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
-  // ─── View switching logic ──────────────────────
+  // ─── View Switching ────────────────────────────
   function openView(view) {
     mainMenu.classList.add('hidden');
     header.classList.remove('hidden');
@@ -25,31 +34,31 @@ document.addEventListener('DOMContentLoaded', () => {
     views.forEach(v => v.classList.add('hidden'));
 
     const target = document.querySelector(`#view-${view}`);
+    if (!target) return;
     target.classList.remove('hidden');
 
+    // Shelter-Side flow only supports scheduling
     if (view === 'schedule') {
-      // 🔹 Correct: use the actual function exported by who-are-you.js
       if (typeof showWhoAreYouScreen === 'function') {
         showWhoAreYouScreen(target, () => {
-          // callback after scheduler selection
           if (typeof renderScheduleFlow === 'function') renderScheduleFlow(target);
         });
       } else if (typeof renderScheduleFlow === 'function') {
-        renderScheduleFlow(target); // fallback
+        renderScheduleFlow(target);
       }
+    } else {
+      // Placeholder for future features
+      target.innerHTML = `<p style="text-align:center; margin-top:2rem; opacity:.6;">This feature is coming soon.</p>`;
     }
   }
 
   function viewTitle(view) {
     return {
-      schedule: 'Schedule New Appointment',
-      modify:   'Modify Existing Appointment',
-      cancel:   'Cancel Appointment',
-      outcome:  'Log Appointment Outcome'
+      schedule: 'Shelter-Side Appointment Scheduling'
     }[view] || '';
   }
 
-  // Expose globally so other modules (like who-are-you) can hook in
+  // Expose globally
   window.openView = openView;
 });
 </script>
