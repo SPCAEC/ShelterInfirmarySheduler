@@ -100,7 +100,7 @@ function appendAppointmentRow_(payload) {
       case CFG.COLS.SEX:                return payload.sex || '';
       case CFG.COLS.AGE:                return payload.age || '';
       case CFG.COLS.WEIGHT:             return ''; // not exposed on frontend
-      case CFG.COLS.ALTERED:            return spayedVal || '';
+      case CFG.COLS.SPAYED:            return spayedVal || '';
       case CFG.COLS.VET_OFFICE:         return payload.vetOffice || '';
       case CFG.COLS.PREV_RECORDS:       return payload.previousVetRecords || 'No';
       case CFG.COLS.ALLERGIES:          return payload.allergies || '';
